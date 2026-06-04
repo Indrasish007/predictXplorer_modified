@@ -2,6 +2,8 @@
 
 > **A unified AI-powered platform for car price prediction, WhatsApp chat analysis with emoji sentiment, and stock market forecasting — built with Streamlit & Python.**
 
+> ℹ️ **Note:** The old PredictXplorer repository is located at https://github.com/Indrasish007/PredictXplorer.
+
 [![GitHub](https://img.shields.io/badge/GitHub-Indrasish007%2FpredictXplorer__modified-181717?style=flat-square&logo=github)](https://github.com/Indrasish007/predictXplorer_modified)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue?style=flat-square&logo=python)
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.45.1-FF4B4B?style=flat-square&logo=streamlit)
