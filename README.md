@@ -80,8 +80,8 @@ PredictXplorer/
 
 ### 1. Clone the repository
 ```bash
-git clone https://github.com/Indrasish007/PredictXplorer.git
-cd PredictXplorer
+git clone https://github.com/Indrasish007/predictXplorer_modified.git
+cd predictXplorer_modified
 ```
 
 ### 2. Install dependencies
