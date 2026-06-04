@@ -37,10 +37,10 @@ Get an instant AI-powered valuation for second-hand cars:
 ### 📈 Stock Price Forecaster
 Forecast up to **4 years** of stock prices:
 - Supports **30+ popular global stocks** (Apple, Tesla, NVIDIA, Meta, and more)
-- Powered by **Meta's Prophet time-series model**
+- Powered by **Meta's Prophet time-series model** or **Linear Regression (Trend Analysis)**
 - Interactive **Plotly charts** for historical Open/Close prices
 - **Trend decomposition** — visualise yearly and weekly seasonality components
-- Live data fetched via **yfinance** from 2015 to today
+- Live stock data fetched directly from Yahoo Finance API (JSON endpoint) with Stooq fallback from 2015 to today
 
 ---
 
@@ -109,7 +109,6 @@ The app will open at **http://localhost:8501** in your browser.
 | `plotly` | 5.24.1 | Interactive charts |
 | `matplotlib` | 3.9.4 | Static charts |
 | `seaborn` | 0.13.2 | Heatmap visualization |
-| `yfinance` | 0.2.54 | Live stock data |
 | `prophet` | 1.1.6 | Time-series forecasting |
 | `wordcloud` | 1.9.4 | Word cloud generation |
 | `Pillow` | 10.4.0 | Image handling |

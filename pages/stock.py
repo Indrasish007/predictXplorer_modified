@@ -1,6 +1,5 @@
 import streamlit as st
 import datetime as dt
-import yfinance as yf
 from prophet import Prophet
 from prophet.plot import plot_plotly
 from plotly import graph_objs as go
@@ -135,88 +134,75 @@ selected_stock_name, selected_ticker = selected_stock
 n_years = st.slider("Years of prediction:", 1, 4)
 period = n_years * 365
 
-# -------------------------------------------------------
-# FIX 2: Correct column flattening for yfinance v0.2+
-# yf.download() returns multi-level columns:
-#   ('Close', 'AAPL'), ('Open', 'AAPL'), ...
-# The old code did col[1] → got 'AAPL' instead of 'Close'
-# Fix: use col[0] to get the field name.
-# FIX 3: Strip timezone from Date so Prophet works.
-# -------------------------------------------------------
-def _make_yf_session():
-    """Return a requests Session with browser-like headers to avoid Yahoo Finance rate limiting."""
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/125.0.0.0 Safari/537.36"
-        ),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-    })
-    return session
-
-def _normalize(data):
-    """Flatten columns, reset index, strip timezone. Returns clean df or None."""
-    if isinstance(data.columns, pd.MultiIndex):
-        data.columns = [col[0] for col in data.columns]
-    if 'Close' not in data.columns or 'Open' not in data.columns:
-        return None
-    data = data.reset_index()
-    date_col = 'Date' if 'Date' in data.columns else data.columns[0]
-    data = data.rename(columns={date_col: 'Date'})
-    if pd.api.types.is_datetime64tz_dtype(data['Date']):
-        data['Date'] = data['Date'].dt.tz_localize(None)
-    if len(data) < 100:
-        return None
-    return data
+model_option = st.selectbox(
+    "Select Forecasting Model",
+    ["Prophet (Meta's Time-Series)", "Linear Regression (Statistical Trend)"],
+    help="Prophet captures seasonality (weekly/yearly) and trends, while Linear Regression projects the long-term trend."
+)
 
 @st.cache_data(ttl=3600)
 def load_data(ticker):
     """Pure data-fetching function — NO st.* calls inside a cached function."""
-
-    # ── Tier 1: yfinance with browser-like headers ──────────────────────────
+    start_ts = int(time.mktime(time.strptime(START, "%Y-%m-%d")))
+    end_ts = int(time.mktime(time.strptime(TODAY, "%Y-%m-%d")))
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}?period1={start_ts}&period2={end_ts}&interval=1d"
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    
     for attempt in range(3):
         try:
-            session = _make_yf_session()
-            raw = yf.download(ticker, START, TODAY, progress=False, session=session)
-            if not raw.empty:
-                df = _normalize(raw)
-                if df is not None:
-                    return df, None
-        except Exception as e:
-            err = str(e)
+            response = requests.get(url, headers=headers, timeout=10)
+            if response.status_code == 200:
+                res_json = response.json()
+                if 'chart' in res_json and res_json['chart']['result']:
+                    result = res_json['chart']['result'][0]
+                    timestamps = result.get('timestamp', [])
+                    indicators = result.get('indicators', {}).get('quote', [{}])[0]
+                    
+                    # Try to get adjusted close if available, else standard close
+                    adjclose_data = result.get('indicators', {}).get('adjclose', [{}])[0]
+                    close_prices = adjclose_data.get('adjclose', indicators.get('close', []))
+                    open_prices = indicators.get('open', [])
+                    
+                    if timestamps and close_prices and open_prices:
+                        df = pd.DataFrame({
+                            'Date': pd.to_datetime(timestamps, unit='s'),
+                            'Open': open_prices,
+                            'Close': close_prices
+                        })
+                        # Drop rows with missing values
+                        df = df.dropna(subset=['Open', 'Close'])
+                        # Ensure timezone-naive and normalized
+                        df['Date'] = df['Date'].dt.tz_localize(None).dt.normalize()
+                        
+                        if len(df) >= 50:
+                            return df, None
+            elif response.status_code == 429:
+                time.sleep(2 ** (attempt + 1))
+        except Exception:
             if attempt < 2:
-                time.sleep(2 ** (attempt + 1))   # 2s, 4s
+                time.sleep(2 ** (attempt + 1))
                 continue
 
-    # ── Tier 2: yfinance Ticker.history() ───────────────────────────────────
+    # Fallback: Direct Stooq CSV fetch (cloud-friendly alternative)
     try:
-        session = _make_yf_session()
-        raw = yf.Ticker(ticker, session=session).history(start=START, end=TODAY)
-        if not raw.empty:
-            df = _normalize(raw)
-            if df is not None:
-                return df, None
+        stooq_url = f"https://stooq.com/q/d/l/?s={ticker}.US&d1={START.replace('-', '')}&d2={TODAY.replace('-', '')}&i=d"
+        res = requests.get(stooq_url, headers=headers, timeout=10)
+        if res.status_code == 200 and "Get your apikey" not in res.text:
+            from io import StringIO
+            df_stooq = pd.read_csv(StringIO(res.text))
+            if 'Close' in df_stooq.columns and 'Open' in df_stooq.columns:
+                df_stooq['Date'] = pd.to_datetime(df_stooq['Date'])
+                df_stooq = df_stooq[['Date', 'Open', 'Close']]
+                df_stooq = df_stooq.sort_values('Date').reset_index(drop=True)
+                return df_stooq, None
     except Exception:
         pass
 
-    # ── Tier 3: Stooq via pandas-datareader (cloud-friendly) ────────────────
-    try:
-        from pandas_datareader import data as pdr
-        # Stooq uses TICKER.US for US stocks
-        raw = pdr.DataReader(f"{ticker}.US", 'stooq', start=START, end=TODAY)
-        if not raw.empty:
-            raw = raw.sort_index()          # Stooq returns newest-first
-            df = _normalize(raw)
-            if df is not None:
-                return df, None
-    except Exception as e:
-        pass
-
     return None, (
-        "Could not fetch data from Yahoo Finance or Stooq. "
+        "Could not fetch data from Yahoo Finance API or Stooq. "
         "Both may be temporarily rate-limiting this server. "
         "Please wait 1–2 minutes and try again."
     )
@@ -254,7 +240,7 @@ plot_raw_data()
 # -------------------------------------------------------
 # Forecasting with Prophet
 # -------------------------------------------------------
-st.subheader(f"Forecasting {n_years} year(s) ahead with Prophet")
+st.subheader(f"Forecasting {n_years} year(s) ahead with {model_option.split(' ')[0]}")
 
 try:
     df_train = data[['Date', 'Close']].copy()
@@ -270,36 +256,130 @@ try:
         st.error("Not enough valid data points for prediction (need ≥ 50).")
         st.stop()
 
-    with st.spinner("Training Prophet model... this may take a moment ⏳"):
-        m = Prophet()
-        m.fit(df_train)
+    if "Prophet" in model_option:
+        with st.spinner("Training Prophet model... this may take a moment ⏳"):
+            m = Prophet()
+            m.fit(df_train)
 
-    future = m.make_future_dataframe(periods=period)
-    forecast = m.predict(future)
+        future = m.make_future_dataframe(periods=period)
+        forecast = m.predict(future)
 
-    st.subheader("Forecast Data (last 5 rows)")
-    st.write(forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail())
+        st.subheader("Forecast Data (last 5 rows)")
+        st.write(forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail())
 
-    st.write("### Forecast Chart")
-    try:
-        fig1 = plot_plotly(m, forecast)
+        st.write("### Forecast Chart")
+        try:
+            fig1 = plot_plotly(m, forecast)
+            fig1.update_layout(
+                plot_bgcolor='#0e1117',
+                paper_bgcolor='#0e1117',
+                font=dict(color='white')
+            )
+            st.plotly_chart(fig1, use_container_width=True)
+        except Exception as plot_error:
+            st.warning(f"Interactive plot failed ({plot_error}), showing simple chart.")
+            chart_data = forecast[['ds', 'yhat']].set_index('ds')
+            st.line_chart(chart_data)
+
+        st.write("### Forecast Components")
+        try:
+            fig2 = m.plot_components(forecast)
+            st.pyplot(fig2, use_container_width=True)
+        except Exception as comp_error:
+            st.warning(f"Components plot error: {comp_error}")
+
+    else:  # Linear Regression
+        with st.spinner("Training Linear Regression model... ⏳"):
+            from sklearn.linear_model import LinearRegression
+            import numpy as np
+
+            # Prepare training features: number of days since the first date in training set
+            start_date_train = df_train['ds'].min()
+            df_train['days'] = (df_train['ds'] - start_date_train).dt.days
+            
+            X_train = df_train[['days']].values
+            y_train = df_train['y'].values
+
+            lr = LinearRegression()
+            lr.fit(X_train, y_train)
+
+            # Create future dataframe
+            last_date = df_train['ds'].max()
+            future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=period, freq='D')
+            
+            # Combine training and future dates for plotting
+            all_dates = pd.concat([df_train['ds'], pd.Series(future_dates)]).reset_index(drop=True)
+            all_days = (all_dates - start_date_train).dt.days.values.reshape(-1, 1)
+            
+            predictions = lr.predict(all_days)
+            residuals = y_train - lr.predict(X_train)
+            res_std = np.std(residuals)
+            
+            # Create a forecast dataframe matching Prophet's column names for compatibility
+            forecast = pd.DataFrame({
+                'ds': all_dates,
+                'yhat': predictions,
+                'yhat_lower': predictions - 1.96 * res_std,
+                'yhat_upper': predictions + 1.96 * res_std
+            })
+
+        st.subheader("Forecast Data (last 5 rows)")
+        st.write(forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail())
+
+        st.write("### Forecast Chart")
+        # Plotly chart for Linear Regression
+        fig1 = go.Figure()
+        # Historical actual prices
+        fig1.add_trace(go.Scatter(
+            x=df_train['ds'], 
+            y=df_train['y'], 
+            name='Actual Close', 
+            mode='markers', 
+            marker=dict(color='cyan', size=3)
+        ))
+        # Regression trend line
+        fig1.add_trace(go.Scatter(
+            x=forecast['ds'], 
+            y=forecast['yhat'], 
+            name='Trend (Fit & Forecast)', 
+            line=dict(color='orange', width=2)
+        ))
+        # Confidence interval upper
+        fig1.add_trace(go.Scatter(
+            x=forecast['ds'], 
+            y=forecast['yhat_upper'], 
+            name='Upper Bound', 
+            line=dict(dash='dash', color='rgba(255, 165, 0, 0.3)'),
+            showlegend=False
+        ))
+        # Confidence interval lower
+        fig1.add_trace(go.Scatter(
+            x=forecast['ds'], 
+            y=forecast['yhat_lower'], 
+            name='Lower Bound (95% CI)', 
+            line=dict(dash='dash', color='rgba(255, 165, 0, 0.3)'),
+            fill='tonexty',
+            fillcolor='rgba(255, 165, 0, 0.05)'
+        ))
+        
         fig1.update_layout(
+            title_text="Stock Price Forecast - Linear Regression",
+            xaxis_rangeslider_visible=True,
             plot_bgcolor='#0e1117',
             paper_bgcolor='#0e1117',
             font=dict(color='white')
         )
         st.plotly_chart(fig1, use_container_width=True)
-    except Exception as plot_error:
-        st.warning(f"Interactive plot failed ({plot_error}), showing simple chart.")
-        chart_data = forecast[['ds', 'yhat']].set_index('ds')
-        st.line_chart(chart_data)
-
-    st.write("### Forecast Components")
-    try:
-        fig2 = m.plot_components(forecast)
-        st.pyplot(fig2, use_container_width=True)
-    except Exception as comp_error:
-        st.warning(f"Components plot error: {comp_error}")
+        
+        # Add trend explanation for Linear Regression components
+        st.write("### Trend Analysis Details")
+        slope = lr.coef_[0]
+        intercept = lr.intercept_
+        st.markdown(f"""
+        - **Daily Growth Rate:** `${slope:.4f}` per day (annualized: `${slope * 365.25:.2f}` per year)
+        - **Linear Equation:** `Price = {slope:.4f} * Days + {intercept:.2f}`
+        - **Residual Std Dev:** `${res_std:.2f}` (represents average prediction deviation)
+        """)
 
 except Exception as e:
     st.error(f"Prediction error: {e}")
