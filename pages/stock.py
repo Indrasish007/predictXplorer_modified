@@ -1,252 +1,264 @@
 import streamlit as st
 import datetime as dt
-import yfinance as yf 
+import yfinance as yf
 from prophet import Prophet
 from prophet.plot import plot_plotly
 from plotly import graph_objs as go
 import pandas as pd
+import sidebar
 
-# Custom CSS to style the page
+# Render Custom Sidebar
+sidebar.render(current_page="stock")
+
 st.markdown("""
-    <style>
-        .main {
-            background-color: Black;
-        }
-        h1 {
-            color: #87CEEB;
-            text-align: center;
-            font-family: 'Trebuchet MS', sans-serif;
-            font-size: 3em;
-        }
-        .stButton>button {
-            background-color: #87CEEB;
-            color: Black;
-            font-size: 1.2em;
-            font-family: 'Trebuchet MS', sans-serif;
-            border-radius: 12px;
-        }
-        .stButton>button:hover {
-            background-color: #357ABD;
-            color: white;
-        }
-        .css-18e3th9 {
-            padding-top: 1.5rem;
-        }
-    </style>
-    """, unsafe_allow_html=True)
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&display=swap');
 
-empty_col,col1,col2,col3,col4=st.columns([0.15,1,1,1,1])
-with col1:
-    if st.button("Home Page"):
-        st.switch_page("app.py")
-with col2:
-     if st.button("Whatsapp Chat Analyzer"):
-        st.switch_page("pages/whatsapp.py")
-with col3:
-    if st.button("Car Price Prediction"):
-        st.switch_page("pages/car.py")
-with col4:
-    if st.button("Stock Price Prediction"):
-        st.switch_page("pages/stock.py")
+@keyframes fadeInUp  { from{opacity:0;transform:translateY(30px)} to{opacity:1;transform:translateY(0)} }
+@keyframes float     { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-10px)} }
+@keyframes shimmer   { 0%{background-position:-200% center} 100%{background-position:200% center} }
+@keyframes pulseGlow { 0%,100%{box-shadow:0 0 5px rgba(135,206,235,.3)} 50%{box-shadow:0 0 25px rgba(135,206,235,.8)} }
 
-START="2015-01-01"
-TODAY=dt.date.today().strftime("%Y-%m-%d")
+* { font-family: 'Inter', sans-serif; }
+.main { background: #06060f; }
+[data-testid="stAppViewContainer"] { padding-top: 0.5rem; }
 
-# Load popular stock tickers and names
+.stButton>button {
+    background: linear-gradient(135deg, rgba(135,206,235,.15), rgba(135,206,235,.05));
+    color: #87CEEB;
+    font-weight: 600;
+    border-radius: 10px;
+    border: 1px solid rgba(135,206,235,.3);
+    transition: all .3s ease;
+    animation: fadeInUp .5s ease-out;
+}
+.stButton>button:hover {
+    background: linear-gradient(135deg, #87CEEB, #5ba8cc);
+    color: #06060f;
+    transform: translateY(-3px);
+    box-shadow: 0 8px 25px rgba(135,206,235,.4);
+    border-color: transparent;
+}
+
+.page-title {
+    text-align: center;
+    font-size: clamp(2em,5vw,3.5em);
+    font-weight: 800;
+    background: linear-gradient(135deg, #87CEEB 0%, #fff 50%, #87CEEB 100%);
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: shimmer 3s linear infinite, fadeInUp .8s ease-out;
+    margin-bottom: 6px;
+}
+.stock-icon { font-size:3.5em; animation:float 3s ease-in-out infinite; display:block; text-align:center; }
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown('<span class="stock-icon">📈</span>', unsafe_allow_html=True)
+st.markdown('<div class="page-title">Stock Price Forecaster</div>', unsafe_allow_html=True)
+st.markdown("<p style='text-align:center;color:#8899bb;margin-bottom:20px;'>Predict 1–4 years of stock prices with Meta's Prophet model</p>", unsafe_allow_html=True)
+
+START = "2015-01-01"
+TODAY = dt.date.today().strftime("%Y-%m-%d")
+
+# -------------------------------------------------------
+# FIX 1: Load stock list WITHOUT making API calls.
+# The old code called yf.Ticker(ticker).info for every
+# ticker in the CSV — that's 199 network requests on
+# startup which caused the infinite loading spinner.
+# -------------------------------------------------------
 @st.cache_data
 def load_popular_stocks():
-    # Fallback to hardcoded popular stocks if CSV doesn't exist
+    # Curated popular stocks — no API calls needed at startup
+    popular = [
+        ("Apple Inc.", "AAPL"),
+        ("Microsoft Corporation", "MSFT"),
+        ("Amazon.com Inc.", "AMZN"),
+        ("Alphabet Inc. (Google)", "GOOGL"),
+        ("Tesla Inc.", "TSLA"),
+        ("Meta Platforms Inc.", "META"),
+        ("NVIDIA Corporation", "NVDA"),
+        ("Netflix Inc.", "NFLX"),
+        ("Adobe Inc.", "ADBE"),
+        ("Salesforce Inc.", "CRM"),
+        ("JPMorgan Chase", "JPM"),
+        ("Berkshire Hathaway B", "BRK-B"),
+        ("Visa Inc.", "V"),
+        ("Johnson & Johnson", "JNJ"),
+        ("Pfizer Inc.", "PFE"),
+        ("Coca-Cola Co.", "KO"),
+        ("Walmart Inc.", "WMT"),
+        ("ExxonMobil Corp.", "XOM"),
+        ("Chevron Corp.", "CVX"),
+        ("Nike Inc.", "NKE"),
+        ("McDonald's Corp.", "MCD"),
+        ("Boeing Co.", "BA"),
+        ("Lockheed Martin", "LMT"),
+        ("PayPal Holdings", "PYPL"),
+        ("Uber Technologies", "UBER"),
+        ("Airbnb Inc.", "ABNB"),
+        ("Spotify Technology", "SPOT"),
+        ("FedEx Corp.", "FDX"),
+        ("UPS", "UPS"),
+        ("Caterpillar Inc.", "CAT"),
+    ]
     try:
         df = pd.read_csv('stocks.csv', header=None)
-        stock_list = []
-        for ticker in df[0].tolist():
-            try:
-                stock_info = yf.Ticker(ticker)
-                stock_name = stock_info.info.get('longName', ticker)
-                stock_list.append((stock_name, ticker))
-            except:
-                stock_list.append((ticker, ticker))  # Fallback to ticker as name
-        return stock_list
+        tickers_from_csv = df[0].dropna().astype(str).str.strip().tolist()
+        # Only use well-known US tickers from CSV (no Indian NSE tickers — they need .NS suffix)
+        us_tickers = [t for t in tickers_from_csv if '.' not in t and len(t) <= 5]
+        # Merge: CSV tickers as (ticker, ticker) plus curated names
+        known = {t: name for name, t in popular}
+        merged = []
+        seen = set()
+        for t in us_tickers:
+            if t not in seen:
+                merged.append((known.get(t, t), t))
+                seen.add(t)
+        return merged if merged else popular
     except FileNotFoundError:
-        # Hardcoded popular stocks as fallback
-        st.warning("stocks.csv not found. Using default popular stocks.")
-        return [
-            ("Apple Inc.", "AAPL"),
-            ("Microsoft Corporation", "MSFT"), 
-            ("Amazon.com Inc.", "AMZN"),
-            ("Alphabet Inc.", "GOOGL"),
-            ("Tesla Inc.", "TSLA"),
-            ("Meta Platforms Inc.", "META"),
-            ("NVIDIA Corporation", "NVDA"),
-            ("Netflix Inc.", "NFLX"),
-            ("Adobe Inc.", "ADBE"),
-            ("Salesforce Inc.", "CRM")
-        ]
+        return popular
 
 stocks = load_popular_stocks()
 
-st.title("Stock prediction app")
-selected_stock_name, selected_ticker = st.selectbox(
-    "Select dataset for prediction", stocks, format_func=lambda x: x[0]
+st.title("Stock Prediction App")
+
+selected_stock = st.selectbox(
+    "Select a stock for prediction",
+    stocks,
+    format_func=lambda x: f"{x[0]} ({x[1]})"
 )
+selected_stock_name, selected_ticker = selected_stock
 
-n_years=st.slider("Years of prediction:", 1, 4)
-period=n_years*365
+n_years = st.slider("Years of prediction:", 1, 4)
+period = n_years * 365
 
+# -------------------------------------------------------
+# FIX 2: Correct column flattening for yfinance v0.2+
+# yf.download() returns multi-level columns:
+#   ('Close', 'AAPL'), ('Open', 'AAPL'), ...
+# The old code did col[1] → got 'AAPL' instead of 'Close'
+# Fix: use col[0] to get the field name.
+# FIX 3: Strip timezone from Date so Prophet works.
+# -------------------------------------------------------
 @st.cache_data
 def load_data(ticker):
     try:
-        st.info(f"Attempting to download data for {ticker} from {START} to {TODAY}")
-        
-        # Try downloading with different parameters
-        data = yf.download(ticker, START, TODAY, progress=False, timeout=10, 
-                          threads=False, group_by=None, auto_adjust=True)
-        
-        # Debug info
-        st.info(f"Downloaded data shape: {data.shape if not data.empty else 'Empty'}")
-        
-        # Check if data is empty
+        with st.spinner(f"Downloading data for {ticker}..."):
+            data = yf.download(ticker, START, TODAY, progress=False)
+
         if data.empty:
-            st.error(f"❌ No data found for ticker {ticker}")
-            st.error("Possible causes:")
-            st.error("• 404 Error: Ticker symbol might be invalid or changed")
-            st.error("• Stock might be delisted")
-            st.error("• Yahoo Finance API temporary issues")
-            
-            # Try alternative approach
-            st.info("🔄 Trying alternative download method...")
-            try:
-                stock = yf.Ticker(ticker)
-                data = stock.history(start=START, end=TODAY)
-                if not data.empty:
-                    st.success("✅ Alternative method worked!")
-                else:
-                    st.error("❌ Alternative method also failed")
-                    return None
-            except Exception as alt_error:
-                st.error(f"Alternative method error: {str(alt_error)}")
-                return None
-            
-        # Check if we have the required columns
-        # Handle new yfinance column structure with ticker prefixes
-        if data.columns.nlevels > 1:
-            # Multi-level columns like ('AAPL', 'Close')
-            data.columns = [col[1] if isinstance(col, tuple) else col for col in data.columns]
-        
+            # Fallback: use Ticker.history()
+            stock = yf.Ticker(ticker)
+            data = stock.history(start=START, end=TODAY)
+            if data.empty:
+                return None, "No data found for this ticker. It may be delisted or invalid."
+
+        # Flatten multi-level columns: ('Close','AAPL') → 'Close'
+        if isinstance(data.columns, pd.MultiIndex):
+            data.columns = [col[0] for col in data.columns]
+
         if 'Close' not in data.columns or 'Open' not in data.columns:
-            st.error("Data doesn't contain required columns (Open, Close)")
-            st.error(f"Available columns: {list(data.columns)}")
-            return None
-            
+            return None, f"Required columns not found. Available: {list(data.columns)}"
+
         data.reset_index(inplace=True)
-        
-        # Additional validation
-        if len(data) < 100:  # Need sufficient data for Prophet
-            st.error(f"Insufficient data for prediction. Only {len(data)} data points found.")
-            return None
-            
-        st.success(f"✅ Successfully loaded {len(data)} data points for {ticker}")
-        return data
-        
+
+        # Strip timezone from Date column (Prophet requires tz-naive timestamps)
+        if pd.api.types.is_datetime64tz_dtype(data['Date']):
+            data['Date'] = data['Date'].dt.tz_localize(None)
+
+        if len(data) < 100:
+            return None, f"Insufficient data: only {len(data)} rows. Need at least 100."
+
+        return data, None
+
     except Exception as e:
-        error_msg = str(e).lower()
-        if "404" in error_msg or "not found" in error_msg:
-            st.error(f"❌ HTTP 404 Error for {ticker}")
-            st.error("This ticker symbol might be:")
-            st.error("• Invalid or misspelled")
-            st.error("• Changed (company merged/renamed)")
-            st.error("• Delisted from exchanges")
-            st.info("💡 Try selecting a different stock from the dropdown")
-        else:
-            st.error(f"Error loading data for {ticker}: {str(e)}")
-            st.error("Try selecting a different stock or check your internet connection.")
-        return None
+        return None, str(e)
 
-data_load_state=st.text("Loading data...")
-data=load_data(selected_ticker)
+data, error = load_data(selected_ticker)
 
-if data is None:
-    st.stop()  # Stop execution if no data
+if error or data is None:
+    st.error(f"❌ Could not load data for **{selected_ticker}**.")
+    if error:
+        st.error(f"Reason: {error}")
+    st.info("💡 Try selecting a different stock from the dropdown.")
+    st.stop()
 
-data_load_state.text("Loading data... done!")
+st.success(f"✅ Loaded {len(data)} data points for {selected_ticker}")
 
-st.subheader("Raw data")
+st.subheader("Raw Data (last 5 rows)")
 st.write(data.tail())
 
 def plot_raw_data():
-    fig=go.Figure()
-    fig.add_trace(go.Scatter(x=data['Date'],y=data['Open'],name='stock_open'))
-    fig.add_trace(go.Scatter(x=data['Date'],y=data['Close'],name='stock_close'))
-    fig.update_layout(title_text="Time Series Data",xaxis_rangeslider_visible=True)
-    st.plotly_chart(fig)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=data['Date'], y=data['Open'], name='Open', line=dict(color='cyan')))
+    fig.add_trace(go.Scatter(x=data['Date'], y=data['Close'], name='Close', line=dict(color='orange')))
+    fig.update_layout(
+        title_text="Historical Stock Prices",
+        xaxis_rangeslider_visible=True,
+        plot_bgcolor='#0e1117',
+        paper_bgcolor='#0e1117',
+        font=dict(color='white')
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
 plot_raw_data()
 
-# Forecasting with error handling
+# -------------------------------------------------------
+# Forecasting with Prophet
+# -------------------------------------------------------
+st.subheader(f"Forecasting {n_years} year(s) ahead with Prophet")
+
 try:
-    df_train = data[['Date','Close']].copy()
-    df_train = df_train.rename(columns={"Date":"ds","Close":"y"})
-    
-    # Remove any NaN values
+    df_train = data[['Date', 'Close']].copy()
+    df_train = df_train.rename(columns={"Date": "ds", "Close": "y"})
     df_train = df_train.dropna()
-    
-    # Ensure ds column is datetime
     df_train['ds'] = pd.to_datetime(df_train['ds'])
-    
-    # Additional validation for Prophet
+
+    # Ensure tz-naive (double check)
+    if hasattr(df_train['ds'].dtype, 'tz') and df_train['ds'].dt.tz is not None:
+        df_train['ds'] = df_train['ds'].dt.tz_localize(None)
+
     if len(df_train) < 50:
-        st.error("Not enough valid data points for prediction")
+        st.error("Not enough valid data points for prediction (need ≥ 50).")
         st.stop()
-    
-    # Check for null values properly
-    if df_train['y'].isnull().sum() > 0:
-        st.error("Contains null values in price data")
-        st.stop()
-        
-    m = Prophet()
-    m.fit(df_train)
-    
-    # Make future dataframe and predict
+
+    with st.spinner("Training Prophet model... this may take a moment ⏳"):
+        m = Prophet()
+        m.fit(df_train)
+
     future = m.make_future_dataframe(periods=period)
     forecast = m.predict(future)
 
-    st.subheader("Forecast data")
-    st.write(forecast.tail())
-    
-    st.write('Forecast data')
+    st.subheader("Forecast Data (last 5 rows)")
+    st.write(forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail())
+
+    st.write("### Forecast Chart")
     try:
         fig1 = plot_plotly(m, forecast)
-        fig1.update_traces(line=dict(color='cyan'))
         fig1.update_layout(
-            plot_bgcolor='white',
-            paper_bgcolor='black',
-            font=dict(color='yellow')
+            plot_bgcolor='#0e1117',
+            paper_bgcolor='#0e1117',
+            font=dict(color='white')
         )
-        st.plotly_chart(fig1)
+        st.plotly_chart(fig1, use_container_width=True)
     except Exception as plot_error:
-        st.error(f"Plotting error: {str(plot_error)}")
-        # Fallback to simple line chart
+        st.warning(f"Interactive plot failed ({plot_error}), showing simple chart.")
         chart_data = forecast[['ds', 'yhat']].set_index('ds')
         st.line_chart(chart_data)
-    
-    st.write("Forecast components")
+
+    st.write("### Forecast Components")
     try:
         fig2 = m.plot_components(forecast)
-        st.pyplot(fig2)
+        st.pyplot(fig2, use_container_width=True)
     except Exception as comp_error:
-        st.error(f"Components plot error: {str(comp_error)}")
+        st.warning(f"Components plot error: {comp_error}")
 
 except Exception as e:
-    st.error(f"Prediction error: {str(e)}")
-    st.error("This might be due to:")
-    st.error("• Data format issues")
-    st.error("• Prophet library compatibility")
-    st.error("• Insufficient or invalid data")
-    
-    # Debug information
-    st.subheader("Debug Information")
-    if 'data' in locals():
-        st.write(f"Data shape: {data.shape}")
-        st.write(f"Data columns: {data.columns.tolist()}")
-        st.write("Data sample:")
-        st.write(data.head())
+    st.error(f"Prediction error: {e}")
+    st.write("**Debug info:**")
+    st.write(f"Data shape: {data.shape}")
+    st.write(f"Columns: {data.columns.tolist()}")
+    st.write(data.head())
