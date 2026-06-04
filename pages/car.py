@@ -126,9 +126,7 @@ with fc2:
 st.markdown('</div>', unsafe_allow_html=True)
 
 # ─── Predict Button ───────────────────────────────────────────────────────────
-_, btn_col, _ = st.columns([2, 1.5, 2])
-with btn_col:
-    predict_button = st.button("🔮 Predict Price", use_container_width=True)
+predict_button = st.button("🔮 Predict Price", use_container_width=True)
 
 if predict_button:
     try:

@@ -38,47 +38,52 @@ box-shadow: 4px 0 32px rgba(0, 0, 0, 0.6) !important;
 font-family: 'Inter', sans-serif !important;
 }
 
-/* Base layout relative positioning and top padding to accommodate absolute logo container */
-[data-testid="stSidebarUserContent"] {
+/* Base layout relative positioning and top padding on the scroll container to accommodate logo */
+[data-testid="stSidebar"] > div:not([data-testid="stSidebarCollapsedControl"]),
+[data-testid="stSidebar"] div:has(> [data-testid="stSidebarUserContent"]) {
 position: relative !important;
 padding-top: 100px !important;
+}
+
+/* Reset UserContent to be static and avoid duplicate padding */
+[data-testid="stSidebarUserContent"] {
+position: static !important;
+padding-top: 0px !important;
 display: flex !important;
 flex-direction: column !important;
 }
 
-/* Position the logo's parent element-container at the absolute top of the sidebar */
-[data-testid="stSidebarUserContent"] > div.element-container:has(.px-sidebar-brand) {
+/* Disable positioning on element wrappers to let absolute children position relative to the scroll container */
+[data-testid="stSidebarUserContent"] div[data-testid="stElementContainer"],
+[data-testid="stSidebarUserContent"] div.element-container,
+[data-testid="stSidebarUserContent"] div.stMarkdown,
+[data-testid="stSidebarUserContent"] div[data-testid="stMarkdownContainer"] {
+position: static !important;
+}
+
+.px-sidebar-brand {
 position: absolute !important;
 top: 15px !important;
 left: 10px !important;
 right: 10px !important;
 height: 55px !important;
 z-index: 10000 !important;
+display: flex;
+align-items: center;
+gap: 12px;
+text-decoration: none !important;
+width: auto !important;
 }
 
-/* Position the divider's parent element-container just below the logo */
-[data-testid="stSidebarUserContent"] > div.element-container:has(.px-sidebar-divider) {
+.px-sidebar-divider {
 position: absolute !important;
 top: 75px !important;
 left: 10px !important;
 right: 10px !important;
 height: 1px !important;
 z-index: 10000 !important;
-}
-
-.px-sidebar-brand {
-display: flex;
-align-items: center;
-gap: 12px;
-text-decoration: none !important;
-width: 100% !important;
-height: 100% !important;
-}
-
-.px-sidebar-divider {
-height: 1px !important;
 background: linear-gradient(90deg, transparent, rgba(135, 206, 235, 0.2), transparent) !important;
-width: 100% !important;
+width: auto !important;
 }
 
 .px-sidebar-logo-icon {

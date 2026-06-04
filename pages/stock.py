@@ -123,8 +123,6 @@ def load_popular_stocks():
 
 stocks = load_popular_stocks()
 
-st.title("Stock Prediction App")
-
 selected_stock = st.selectbox(
     "Select a stock for prediction",
     stocks,
