@@ -157,55 +157,69 @@ def _make_yf_session():
     })
     return session
 
+def _normalize(data):
+    """Flatten columns, reset index, strip timezone. Returns clean df or None."""
+    if isinstance(data.columns, pd.MultiIndex):
+        data.columns = [col[0] for col in data.columns]
+    if 'Close' not in data.columns or 'Open' not in data.columns:
+        return None
+    data = data.reset_index()
+    date_col = 'Date' if 'Date' in data.columns else data.columns[0]
+    data = data.rename(columns={date_col: 'Date'})
+    if pd.api.types.is_datetime64tz_dtype(data['Date']):
+        data['Date'] = data['Date'].dt.tz_localize(None)
+    if len(data) < 100:
+        return None
+    return data
+
 @st.cache_data(ttl=3600)
 def load_data(ticker):
-    """Pure data-fetching function — NO st.* calls allowed inside a cached function."""
-    max_retries = 3
-    for attempt in range(max_retries):
+    """Pure data-fetching function — NO st.* calls inside a cached function."""
+
+    # ── Tier 1: yfinance with browser-like headers ──────────────────────────
+    for attempt in range(3):
         try:
             session = _make_yf_session()
-            data = yf.download(
-                ticker, START, TODAY,
-                progress=False,
-                session=session
-            )
-
-            if data.empty:
-                # Fallback: use Ticker.history() with session
-                stock = yf.Ticker(ticker, session=session)
-                data = stock.history(start=START, end=TODAY)
-                if data.empty:
-                    if attempt < max_retries - 1:
-                        time.sleep(2 ** attempt)   # 1s, 2s, 4s
-                        continue
-                    return None, "No data found for this ticker. It may be delisted or invalid."
-
-            # Flatten multi-level columns: ('Close','AAPL') -> 'Close'
-            if isinstance(data.columns, pd.MultiIndex):
-                data.columns = [col[0] for col in data.columns]
-
-            if 'Close' not in data.columns or 'Open' not in data.columns:
-                return None, f"Required columns not found. Available: {list(data.columns)}"
-
-            data.reset_index(inplace=True)
-
-            # Strip timezone from Date column (Prophet requires tz-naive timestamps)
-            if pd.api.types.is_datetime64tz_dtype(data['Date']):
-                data['Date'] = data['Date'].dt.tz_localize(None)
-
-            if len(data) < 100:
-                return None, f"Insufficient data: only {len(data)} rows. Need at least 100."
-
-            return data, None
-
+            raw = yf.download(ticker, START, TODAY, progress=False, session=session)
+            if not raw.empty:
+                df = _normalize(raw)
+                if df is not None:
+                    return df, None
         except Exception as e:
             err = str(e)
-            if ("rate" in err.lower() or "429" in err or "too many" in err.lower()) and attempt < max_retries - 1:
-                wait = 2 ** (attempt + 1)   # 2s, 4s, 8s
-                time.sleep(wait)
+            if attempt < 2:
+                time.sleep(2 ** (attempt + 1))   # 2s, 4s
                 continue
-            return None, err
-    return None, "Failed after multiple retries. Yahoo Finance may be temporarily blocking cloud requests. Please try again in a minute."
+
+    # ── Tier 2: yfinance Ticker.history() ───────────────────────────────────
+    try:
+        session = _make_yf_session()
+        raw = yf.Ticker(ticker, session=session).history(start=START, end=TODAY)
+        if not raw.empty:
+            df = _normalize(raw)
+            if df is not None:
+                return df, None
+    except Exception:
+        pass
+
+    # ── Tier 3: Stooq via pandas-datareader (cloud-friendly) ────────────────
+    try:
+        from pandas_datareader import data as pdr
+        # Stooq uses TICKER.US for US stocks
+        raw = pdr.DataReader(f"{ticker}.US", 'stooq', start=START, end=TODAY)
+        if not raw.empty:
+            raw = raw.sort_index()          # Stooq returns newest-first
+            df = _normalize(raw)
+            if df is not None:
+                return df, None
+    except Exception as e:
+        pass
+
+    return None, (
+        "Could not fetch data from Yahoo Finance or Stooq. "
+        "Both may be temporarily rate-limiting this server. "
+        "Please wait 1–2 minutes and try again."
+    )
 
 with st.spinner(f"Fetching stock data for {selected_ticker}..."):
     data, error = load_data(selected_ticker)

@@ -11,3 +11,4 @@ yfinance==0.2.54
 prophet==1.1.6
 pyarrow==17.0.0
 emoji==2.15.0
+pandas-datareader==0.10.0
