@@ -159,16 +159,16 @@ def _make_yf_session():
 
 @st.cache_data(ttl=3600)
 def load_data(ticker):
+    """Pure data-fetching function — NO st.* calls allowed inside a cached function."""
     max_retries = 3
     for attempt in range(max_retries):
         try:
             session = _make_yf_session()
-            with st.spinner(f"Downloading data for {ticker}... (attempt {attempt+1}/{max_retries})"):
-                data = yf.download(
-                    ticker, START, TODAY,
-                    progress=False,
-                    session=session
-                )
+            data = yf.download(
+                ticker, START, TODAY,
+                progress=False,
+                session=session
+            )
 
             if data.empty:
                 # Fallback: use Ticker.history() with session
@@ -180,7 +180,7 @@ def load_data(ticker):
                         continue
                     return None, "No data found for this ticker. It may be delisted or invalid."
 
-            # Flatten multi-level columns: ('Close','AAPL') → 'Close'
+            # Flatten multi-level columns: ('Close','AAPL') -> 'Close'
             if isinstance(data.columns, pd.MultiIndex):
                 data.columns = [col[0] for col in data.columns]
 
@@ -202,13 +202,13 @@ def load_data(ticker):
             err = str(e)
             if ("rate" in err.lower() or "429" in err or "too many" in err.lower()) and attempt < max_retries - 1:
                 wait = 2 ** (attempt + 1)   # 2s, 4s, 8s
-                st.toast(f"⏳ Rate limited by Yahoo Finance — retrying in {wait}s...", icon="⚠️")
                 time.sleep(wait)
                 continue
             return None, err
     return None, "Failed after multiple retries. Yahoo Finance may be temporarily blocking cloud requests. Please try again in a minute."
 
-data, error = load_data(selected_ticker)
+with st.spinner(f"Fetching stock data for {selected_ticker}..."):
+    data, error = load_data(selected_ticker)
 
 if error or data is None:
     st.error(f"❌ Could not load data for **{selected_ticker}**.")
