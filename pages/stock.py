@@ -5,6 +5,8 @@ from prophet import Prophet
 from prophet.plot import plot_plotly
 from plotly import graph_objs as go
 import pandas as pd
+import time
+import requests
 import sidebar
 
 # Render Custom Sidebar
@@ -141,39 +143,70 @@ period = n_years * 365
 # Fix: use col[0] to get the field name.
 # FIX 3: Strip timezone from Date so Prophet works.
 # -------------------------------------------------------
-@st.cache_data
+def _make_yf_session():
+    """Return a requests Session with browser-like headers to avoid Yahoo Finance rate limiting."""
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/125.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+    })
+    return session
+
+@st.cache_data(ttl=3600)
 def load_data(ticker):
-    try:
-        with st.spinner(f"Downloading data for {ticker}..."):
-            data = yf.download(ticker, START, TODAY, progress=False)
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            session = _make_yf_session()
+            with st.spinner(f"Downloading data for {ticker}... (attempt {attempt+1}/{max_retries})"):
+                data = yf.download(
+                    ticker, START, TODAY,
+                    progress=False,
+                    session=session
+                )
 
-        if data.empty:
-            # Fallback: use Ticker.history()
-            stock = yf.Ticker(ticker)
-            data = stock.history(start=START, end=TODAY)
             if data.empty:
-                return None, "No data found for this ticker. It may be delisted or invalid."
+                # Fallback: use Ticker.history() with session
+                stock = yf.Ticker(ticker, session=session)
+                data = stock.history(start=START, end=TODAY)
+                if data.empty:
+                    if attempt < max_retries - 1:
+                        time.sleep(2 ** attempt)   # 1s, 2s, 4s
+                        continue
+                    return None, "No data found for this ticker. It may be delisted or invalid."
 
-        # Flatten multi-level columns: ('Close','AAPL') → 'Close'
-        if isinstance(data.columns, pd.MultiIndex):
-            data.columns = [col[0] for col in data.columns]
+            # Flatten multi-level columns: ('Close','AAPL') → 'Close'
+            if isinstance(data.columns, pd.MultiIndex):
+                data.columns = [col[0] for col in data.columns]
 
-        if 'Close' not in data.columns or 'Open' not in data.columns:
-            return None, f"Required columns not found. Available: {list(data.columns)}"
+            if 'Close' not in data.columns or 'Open' not in data.columns:
+                return None, f"Required columns not found. Available: {list(data.columns)}"
 
-        data.reset_index(inplace=True)
+            data.reset_index(inplace=True)
 
-        # Strip timezone from Date column (Prophet requires tz-naive timestamps)
-        if pd.api.types.is_datetime64tz_dtype(data['Date']):
-            data['Date'] = data['Date'].dt.tz_localize(None)
+            # Strip timezone from Date column (Prophet requires tz-naive timestamps)
+            if pd.api.types.is_datetime64tz_dtype(data['Date']):
+                data['Date'] = data['Date'].dt.tz_localize(None)
 
-        if len(data) < 100:
-            return None, f"Insufficient data: only {len(data)} rows. Need at least 100."
+            if len(data) < 100:
+                return None, f"Insufficient data: only {len(data)} rows. Need at least 100."
 
-        return data, None
+            return data, None
 
-    except Exception as e:
-        return None, str(e)
+        except Exception as e:
+            err = str(e)
+            if ("rate" in err.lower() or "429" in err or "too many" in err.lower()) and attempt < max_retries - 1:
+                wait = 2 ** (attempt + 1)   # 2s, 4s, 8s
+                st.toast(f"⏳ Rate limited by Yahoo Finance — retrying in {wait}s...", icon="⚠️")
+                time.sleep(wait)
+                continue
+            return None, err
+    return None, "Failed after multiple retries. Yahoo Finance may be temporarily blocking cloud requests. Please try again in a minute."
 
 data, error = load_data(selected_ticker)
 
