@@ -136,8 +136,8 @@ period = n_years * 365
 
 model_option = st.selectbox(
     "Select Forecasting Model",
-    ["Prophet (Meta's Time-Series)", "Linear Regression (Statistical Trend)"],
-    help="Prophet captures seasonality (weekly/yearly) and trends, while Linear Regression projects the long-term trend."
+    ["Linear Regression (Statistical Trend)", "Prophet (Meta's Time-Series)"],
+    help="Linear Regression projects the long-term trend, while Prophet captures seasonality (weekly/yearly) and trends."
 )
 
 @st.cache_data(ttl=3600)
@@ -383,6 +383,11 @@ try:
 
 except Exception as e:
     st.error(f"Prediction error: {e}")
+    if "stan_backend" in str(e):
+        st.warning(
+            "⚠️ **Prophet Backend Issue:** Streamlit Cloud's container environment has a compilation/dependency issue with the Prophet compiler backend. "
+            "Please make sure the **Select Forecasting Model** dropdown above is set to **Linear Regression (Statistical Trend)** to generate the forecast successfully."
+        )
     st.write("**Debug info:**")
     st.write(f"Data shape: {data.shape}")
     st.write(f"Columns: {data.columns.tolist()}")
